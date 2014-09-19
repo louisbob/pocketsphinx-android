@@ -252,32 +252,25 @@ public class SpeechRecognizer {
         @Override
         public void run() {
         	
-        	int bufferSize = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO,
-        			AudioFormat.ENCODING_PCM_16BIT);
-
-            if (bufferSize == AudioRecord.ERROR_BAD_VALUE) {
-            	Log.e(TAG, "BufferSize has a BAD VALUE");
-            }
-            
             AudioRecord recorder = new AudioRecord(
                     AudioSource.VOICE_RECOGNITION, sampleRate,
                     AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT, bufferSize);
+                    AudioFormat.ENCODING_PCM_16BIT, 8192);
             
-        	Log.i(TAG, "Waiting for the AudioRecord to be initialized...");
-        	while(recorder.getState() == AudioRecord.STATE_UNINITIALIZED) {
-        		try {
-               		Thread.sleep(100);
-               	} catch (InterruptedException e) {
-               		Log.e(TAG,"RecognizerThread has been interrupted.");
-               		recorder.release();
-               		return;
-               	} 
-        		recorder = new AudioRecord(
-                    AudioSource.VOICE_RECOGNITION, sampleRate,
-                    AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT, bufferSize);
-        	}
+	    Log.i(TAG, "Waiting for the AudioRecord to be initialized...");
+	    while(recorder.getState() == AudioRecord.STATE_UNINITIALIZED) {
+	    try {
+		Thread.sleep(100);
+	    } catch (InterruptedException e) {
+		Log.e(TAG,"RecognizerThread has been interrupted.");
+		recorder.release();
+		return;
+	    } 
+		recorder = new AudioRecord(
+		AudioSource.VOICE_RECOGNITION, sampleRate,
+		AudioFormat.CHANNEL_IN_MONO,
+		AudioFormat.ENCODING_PCM_16BIT, 8192);
+	    }
             Log.i(TAG, "AudioRecord is STATE_INITIALIZED");
             
             decoder.startUtt(null);
