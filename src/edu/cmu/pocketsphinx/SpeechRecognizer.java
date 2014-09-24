@@ -254,9 +254,8 @@ public class SpeechRecognizer {
 
         @Override
         public void run() {
-        	
-	        AudioRecord recorder = new AudioRecord(
-	                AudioSource.VOICE_RECOGNITION, sampleRate,
+        	AudioRecord recorder = new AudioRecord(
+        			AudioSource.VOICE_RECOGNITION, sampleRate,
 	                AudioFormat.CHANNEL_IN_MONO,
 	                AudioFormat.ENCODING_PCM_16BIT, bufferSize * 2);
 	          
