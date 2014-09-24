@@ -33,6 +33,7 @@ package edu.cmu.pocketsphinx;
 import static java.lang.String.format;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.Collection;
 import java.util.HashSet;
 
@@ -53,8 +54,6 @@ import android.util.Log;
 public class SpeechRecognizer {
 
     protected static final String TAG = SpeechRecognizer.class.getSimpleName();
-
-    private static final int BUFFER_SIZE = 1024;
 
     private final Decoder decoder;
 
@@ -109,7 +108,7 @@ public class SpeechRecognizer {
      * Starts recognition. After specified timeout listening stops and the
      * endOfSpeech signals about that. Does nothing if recognition is active.
      * 
-     * @timeout - timeout in seconds to listen.
+     * @timeout - timeout in milliseconds to listen.
      * 
      * @return true if recognition was actually started
      */
@@ -236,65 +235,59 @@ public class SpeechRecognizer {
 
     private final class RecognizerThread extends Thread {
 
-        private int timeout;
+        private int bufferSize;
+        private int remainingSamples;
+        private int timeoutSamples;
         private final static int NO_TIMEOUT = -1;
+        private final static float BUFFER_SIZE_SECONDS = 0.2f;
 
         public RecognizerThread(int timeout) {
-            this.timeout = timeout * 2 * sampleRate / BUFFER_SIZE; // We will
-                                                                   // count
-                                                                   // buffers
+            this.bufferSize = Math.round(sampleRate * BUFFER_SIZE_SECONDS);
+            this.timeoutSamples = timeout * sampleRate / 1000;
+            this.remainingSamples = this.timeoutSamples;
         }
 
         public RecognizerThread() {
-            timeout = NO_TIMEOUT;
+            this.bufferSize = Math.round(sampleRate * BUFFER_SIZE_SECONDS);
+            timeoutSamples = NO_TIMEOUT;
         }
 
         @Override
         public void run() {
         	
-            AudioRecord recorder = new AudioRecord(
-                    AudioSource.VOICE_RECOGNITION, sampleRate,
-                    AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT, 8192);
-            
-	    Log.i(TAG, "Waiting for the AudioRecord to be initialized...");
-	    while(recorder.getState() == AudioRecord.STATE_UNINITIALIZED) {
-	    try {
-		Thread.sleep(100);
-	    } catch (InterruptedException e) {
-		Log.e(TAG,"RecognizerThread has been interrupted.");
-		recorder.release();
-		return;
-	    } 
-		recorder = new AudioRecord(
-		AudioSource.VOICE_RECOGNITION, sampleRate,
-		AudioFormat.CHANNEL_IN_MONO,
-		AudioFormat.ENCODING_PCM_16BIT, 8192);
-	    }
-            Log.i(TAG, "AudioRecord is STATE_INITIALIZED");
+	        AudioRecord recorder = new AudioRecord(
+	                AudioSource.VOICE_RECOGNITION, sampleRate,
+	                AudioFormat.CHANNEL_IN_MONO,
+	                AudioFormat.ENCODING_PCM_16BIT, bufferSize * 2);
+	          
+		    Log.i(TAG, "Waiting for the AudioRecord to be initialized...");
+		    
+		    if(recorder.getState() == AudioRecord.STATE_UNINITIALIZED) {  //THROW EXCEPTION
+				recorder.release();
+				IOException ioe = new IOException("Impossible to start the AudioRecord (AudioRecord STATE_UNINITIALIZED)."
+                		+ " Your microphone might be already in use or hasn't been properly released.");
+				mainHandler.post(new OnErrorEvent(ioe));
+				return;
+		    }
             
             decoder.startUtt(null);
             recorder.startRecording();
-            
-        	Log.i(TAG, "Waiting for the AudioRecord to start recording...");
-        	while(recorder.getRecordingState() == AudioRecord.RECORDSTATE_STOPPED) {
-               	 try {
-               		Thread.sleep(100);
-               	 } catch (InterruptedException e) {
-               		Log.i("TAG","RecognizerThread has been interrupted.");
-               		recorder.stop();
-                    recorder.release();
-            		return;
-               	 }
-               	 recorder.startRecording();
+        	
+        	if(recorder.getRecordingState() == AudioRecord.RECORDSTATE_STOPPED) {
+           		recorder.stop();
+                recorder.release();
+                IOException ioe = new IOException("Impossible to start the AudioRecord (AudioRecord RECORDSTATE_STOPPED)."
+                		+ " Your microphone might be already in use or hasn't been properly released.");
+				mainHandler.post(new OnErrorEvent(ioe));
+        		return;
         	}
             
             Log.i(TAG,"AudioRecord state is RECORDSTATE_RECORDING");
             
-            short[] buffer = new short[BUFFER_SIZE];
+            short[] buffer = new short[bufferSize];
             boolean inSpeech = decoder.getInSpeech();
 
-            while (!interrupted() && timeout != 0) {
+            while (!interrupted() && ((timeoutSamples == NO_TIMEOUT) || (remainingSamples > 0))) {
                 int nread = recorder.read(buffer, 0, buffer.length);
 
                 if (-1 == nread) {
@@ -306,27 +299,28 @@ public class SpeechRecognizer {
                         inSpeech = decoder.getInSpeech();
                         mainHandler.post(new InSpeechChangeEvent(inSpeech));
                     }
+                    
+                    if (inSpeech)
+                        remainingSamples = timeoutSamples;
 
                     final Hypothesis hypothesis = decoder.hyp();
                     mainHandler.post(new ResultEvent(hypothesis, false));
                 }
 
-                if (timeout > 0) {
-                    timeout--;
+                if (timeoutSamples != NO_TIMEOUT) {
+                    remainingSamples = remainingSamples - nread;
                 }
             }
 
             recorder.stop();
-            int nread = recorder.read(buffer, 0, buffer.length);
             recorder.release();
-            decoder.processRaw(buffer, nread, false, false);
             decoder.endUtt();
 
             // Remove all pending notifications.
             mainHandler.removeCallbacksAndMessages(null);
 
             // If we met timeout signal that speech ended
-            if (timeout == 0) {
+            if (timeoutSamples != NO_TIMEOUT && remainingSamples <= 0) {
                 mainHandler.post(new InSpeechChangeEvent(false));
             }
         }
@@ -373,6 +367,19 @@ public class SpeechRecognizer {
                 listener.onResult(hypothesis);
             else
                 listener.onPartialResult(hypothesis);
+        }
+    }
+    
+    private class OnErrorEvent extends RecognitionEvent {
+        private final Exception exception;
+
+        OnErrorEvent(Exception exception) {
+            this.exception = exception;
+        }
+
+        @Override
+        protected void execute(RecognitionListener listener) {
+            listener.onError(exception);
         }
     }
 }
